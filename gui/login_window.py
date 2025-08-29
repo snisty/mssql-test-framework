@@ -108,9 +108,10 @@ class LoginWindow(QDialog):
         
         self.setLayout(layout)
         
-        # 기본값 설정 (개발 시 편의를 위해)
-        self.server_input.setText("lta-aspopdev, 2494")
-        self.database_input.setText("ASPOPSQL")
+        # 기본값 설정 (.env 파일에서 로드)
+        from config.settings import DEFAULT_DB_CONFIG
+        self.server_input.setText(DEFAULT_DB_CONFIG.get('server', ''))
+        self.database_input.setText(DEFAULT_DB_CONFIG.get('database', ''))
         
     def on_auth_type_changed(self, state):
         """인증 타입 변경 처리"""

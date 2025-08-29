@@ -57,6 +57,11 @@ wheels/
 .installed.cfg
 *.egg
 
+# PyInstaller
+*.spec
+*.manifest
+*.exe
+
 # Database
 *.db
 *.sqlite
@@ -67,6 +72,9 @@ config/local.yaml
 config/*.local.yaml
 .env
 .env.local
+.env.dev
+.env.prod
+.env.production
 
 # Test results
 test_results/
@@ -74,6 +82,20 @@ reports/
 *.html
 *.xml
 
+# Temporary files and cache
+*.tmp
+*.temp
+.cache/
+
+# Personal/sensitive files
+personal_config/
+credentials/
+secrets/
+
 # OS
 .DS_Store
 Thumbs.db
+
+# Development files
+*.dev.yaml
+*.local.config
