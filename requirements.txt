@@ -1,0 +1,27 @@
+# GUI Framework
+PySide6>=6.5.0
+
+# Database
+pyodbc>=5.0.0
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+deepdiff>=6.3.0
+
+# Configuration
+python-dotenv>=1.0.0
+pyyaml>=6.0
+
+# Logging
+colorlog>=6.7.0
+
+# Type Checking
+mypy>=1.4.0
+types-PyYAML>=6.0.0
+
+# Development
+black>=23.0.0
+flake8>=6.0.0
+pytest>=7.4.0
+pytest-cov>=4.1.0
