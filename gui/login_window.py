@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QCheckBox, QLabel,
     QMessageBox, QGroupBox
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSettings
 from PySide6.QtGui import QFont
 import logging
 
@@ -23,7 +23,9 @@ class LoginWindow(QDialog):
     
     def __init__(self):
         super().__init__()
+        self.settings = QSettings("SQL_Test_Framework", "LoginSettings")
         self.init_ui()
+        self.load_settings()
         
     def init_ui(self):
         """UI 초기화"""
@@ -193,6 +195,8 @@ class LoginWindow(QDialog):
             db_conn = DatabaseConnection(config)
             
             if db_conn.test_connection():
+                # 로그인 성공시 설정 저장
+                self.save_settings()
                 self.login_success.emit(config)
                 self.accept()
             else:
@@ -215,3 +219,38 @@ class LoginWindow(QDialog):
         """상태 메시지 설정"""
         self.status_label.setText(message)
         self.status_label.setStyleSheet(f"color: {color};")
+        
+    def load_settings(self):
+        """이전 로그인 정보 로드"""
+        # 서버 정보 로드
+        server = self.settings.value("server", "")
+        database = self.settings.value("database", "")
+        
+        if server:
+            self.server_input.setText(server)
+        if database:
+            self.database_input.setText(database)
+            
+        # 인증 타입 로드
+        use_windows_auth = self.settings.value("use_windows_auth", True, type=bool)
+        self.windows_auth_checkbox.setChecked(use_windows_auth)
+        
+        # 사용자명 로드 (패스워드는 보안상 저장하지 않음)
+        username = self.settings.value("username", "")
+        if username and not use_windows_auth:
+            self.username_input.setText(username)
+            
+        # 인증 타입 변경에 따른 UI 업데이트
+        self.on_auth_type_changed(Qt.Checked if use_windows_auth else Qt.Unchecked)
+        
+    def save_settings(self):
+        """현재 로그인 정보 저장"""
+        self.settings.setValue("server", self.server_input.text().strip())
+        self.settings.setValue("database", self.database_input.text().strip())
+        self.settings.setValue("use_windows_auth", self.windows_auth_checkbox.isChecked())
+        
+        # SQL 인증 사용시에만 사용자명 저장 (패스워드는 보안상 저장하지 않음)
+        if not self.windows_auth_checkbox.isChecked():
+            self.settings.setValue("username", self.username_input.text().strip())
+        else:
+            self.settings.remove("username")

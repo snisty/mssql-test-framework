@@ -164,8 +164,8 @@ class ResultWindow(QDialog):
         left_layout = QVBoxLayout()
         
         self.test_list = QTableWidget()
-        self.test_list.setColumnCount(4)
-        self.test_list.setHorizontalHeaderLabels(["상태", "원본 프로시저", "튜닝 프로시저", "성능 개선"])
+        self.test_list.setColumnCount(5)
+        self.test_list.setHorizontalHeaderLabels(["상태", "원본SP", "원본시간", "튜닝SP", "튜닝시간"])
         self.test_list.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.test_list.setSelectionBehavior(QTableWidget.SelectRows)
         self.test_list.itemSelectionChanged.connect(self.on_test_selected)
@@ -255,27 +255,35 @@ class ResultWindow(QDialog):
             tuned_sp = test_case_info.get('tuned_sp', f"SP_{result.get('test_case_id', 0)}_Tuned")
             
             self.test_list.setItem(i, 1, QTableWidgetItem(original_sp))
-            self.test_list.setItem(i, 2, QTableWidgetItem(tuned_sp))
+            self.test_list.setItem(i, 3, QTableWidgetItem(tuned_sp))
             
-            # 실행시간 및 성능 개선 정보
+            # 개별 실행시간 표시
             original_time = result.get('original_execution_time', 0)
             tuned_time = result.get('tuned_execution_time', 0)
             
-            if original_time > 0 and tuned_time > 0:
-                time_diff = original_time - tuned_time
-                improvement_pct = (time_diff / original_time) * 100
-                
-                if abs(time_diff) < 0.001:  # 차이가 1ms 미만
-                    time_display = f"원본: {original_time:.3f}초, 튜닝: {tuned_time:.3f}초"
-                elif improvement_pct > 0:  # 개선됨
-                    time_display = f"{time_diff:.3f}초 단축 ({improvement_pct:.1f}% 개선)"
-                else:  # 느려짐
-                    time_display = f"{abs(time_diff):.3f}초 증가 ({abs(improvement_pct):.1f}% 저하)"
+            # 원본 시간 표시
+            if original_time > 0:
+                original_time_text = f"{original_time:.3f}초"
             else:
-                exec_time = result.get('execution_time', 0)
-                time_display = f"{exec_time:.2f}초"
+                # 실패한 경우 확인
+                error_msg = result.get('error', '')
+                if error_msg and ('원본' in error_msg or 'original' in error_msg.lower()):
+                    original_time_text = "실패"
+                else:
+                    original_time_text = "0.000초"
+            self.test_list.setItem(i, 2, QTableWidgetItem(original_time_text))
             
-            self.test_list.setItem(i, 3, QTableWidgetItem(time_display))
+            # 튜닝 시간 표시
+            if tuned_time > 0:
+                tuned_time_text = f"{tuned_time:.3f}초"
+            else:
+                # 실패한 경우 확인
+                error_msg = result.get('error', '')
+                if error_msg and ('튜닝' in error_msg or 'tuned' in error_msg.lower()):
+                    tuned_time_text = "실패"
+                else:
+                    tuned_time_text = "0.000초"
+            self.test_list.setItem(i, 4, QTableWidgetItem(tuned_time_text))
         
         # 첫 번째 결과 선택
         if self.results:
@@ -348,63 +356,120 @@ class ResultWindow(QDialog):
         summary.append("=" * 50)
         
         status = result.get('status', 'unknown')
-        summary.append(f"실행 상태: {status.upper()}")
-        
-        if status == 'success':
-            error_msg = result.get('error', '')
-            if error_msg and ('프로시저 실패' in error_msg):
-                summary.append(f"실행 상태: 부분 성공")
-                summary.append(f"부분 실패 정보: {error_msg}")
-            else:
-                comparison = result.get('comparison_result')
-                if comparison:
-                    is_equal = comparison.get('is_equal', False)
-                    summary.append(f"비교 결과: {'PASS' if is_equal else 'FAIL'}")
-                    
-                    # 차이점 정보
-                    differences = comparison.get('differences', [])
-                    if differences:
-                        summary.append(f"차이점 개수: {len(differences)}개")
-                        # 첫 번째 차이점의 메시지를 바로 표시 (이제 comparison.py에서 상세한 메시지가 생성됨)
-                        first_diff_message = differences[0].get('message', '알 수 없는 차이')
-                        summary.append(f"  주요 차이점: {first_diff_message}")
-                else:
-                    summary.append("비교 결과: 없음")
-        else:
-            error_msg = result.get('error', '알 수 없는 오류')
-            # TimeOut 오류인 경우 명확히 표시
-            if error_msg and 'timeout' in error_msg.lower():
-                summary.append(f"실행 상태: TimeOut")
-                summary.append(f"오류 메시지: {error_msg}")
-            else:
-                summary.append(f"오류 메시지: {error_msg}")
-        
-        # 성능 개선 정보 추가
+        error_msg = result.get('error', '')
         original_time = result.get('original_execution_time', 0)
         tuned_time = result.get('tuned_execution_time', 0)
-        exec_time = result.get('execution_time', 0)
         
+        # 실행 상태 판별
+        original_failed = False
+        tuned_failed = False
+        
+        if status != 'success':
+            # 전체 실패
+            if 'timeout' in error_msg.lower():
+                execution_status = "실패 (TimeOut)"
+            else:
+                execution_status = "실패"
+        elif error_msg and '프로시저 실패' in error_msg:
+            # 부분 실패 - 어느 것이 실패했는지 판별
+            if '원본' in error_msg:
+                original_failed = True
+                execution_status = "원본 실패 / 튜닝 성공"
+            elif '튜닝' in error_msg:
+                tuned_failed = True
+                execution_status = "원본 성공 / 튜닝 실패"
+            else:
+                execution_status = "부분 실패"
+        else:
+            execution_status = "성공"
+        
+        summary.append(f"- 실행 상태 : {execution_status}")
+        
+        # 개별 실행 시간과 결과 표시
+        if original_failed:
+            summary.append(f"- 원본 : 실패 ({original_time:.2f}초)")
+        elif original_time > 0:
+            summary.append(f"- 원본 : 성공 ({original_time:.2f}초)")
+        else:
+            summary.append("- 원본 : 정보 없음")
+        
+        if tuned_failed:
+            summary.append(f"- 튜닝 : 실패 ({tuned_time:.2f}초)")
+        elif tuned_time > 0:
+            summary.append(f"- 튜닝 : 성공 ({tuned_time:.2f}초)")
+        else:
+            summary.append("- 튜닝 : 정보 없음")
+        
+        # 성능 차이 계산 (둘 다 성공한 경우에만)
+        if original_time > 0 and tuned_time > 0 and not original_failed and not tuned_failed:
+            time_diff = tuned_time - original_time
+            improvement_pct = (time_diff / original_time) * 100
+            
+            if abs(time_diff) < 0.001:  # 차이가 1ms 미만
+                summary.append("- 차이 : 미미함 (1ms 미만)")
+            elif improvement_pct > 0:  # 느려짐
+                summary.append(f"- 차이 : {time_diff:.2f}초({improvement_pct:.0f}%) 증가")
+            else:  # 개선됨
+                summary.append(f"- 차이 : {abs(time_diff):.2f}초({abs(improvement_pct):.0f}%) 감소")
+        
+        # 비교 결과 표시 (성공한 경우에만)
+        if status == 'success' and not original_failed and not tuned_failed:
+            comparison = result.get('comparison_result')
+            if comparison:
+                is_equal = comparison.get('is_equal', False)
+                summary.append(f"- 비교 결과: {'PASS' if is_equal else 'FAIL'}")
+                
+                # 차이점 정보
+                differences = comparison.get('differences', [])
+                if differences:
+                    summary.append(f"- 차이점 개수: {len(differences)}개")
+                    first_diff_message = differences[0].get('message', '알 수 없는 차이')
+                    summary.append(f"  주요 차이점: {first_diff_message}")
+            else:
+                summary.append("- 비교 결과: 없음")
+        
+        # 실패 원인 섹션 추가
+        if status != 'success' or error_msg:
+            summary.append("")
+            summary.append("=" * 50)
+            summary.append("실패 원인")
+            summary.append("=" * 50)
+            
+            if original_failed:
+                summary.append(f"- 원본 : {error_msg}")
+                summary.append("- 튜닝 : 성공")
+            elif tuned_failed:
+                summary.append("- 원본 : 성공")
+                summary.append(f"- 튜닝 : {error_msg}")
+            elif status != 'success':
+                summary.append(f"- 전체 실패 : {error_msg}")
+        
+        # 성능 분석 섹션 통합
         summary.append("")
         summary.append("=" * 50)
         summary.append("성능 분석")
         summary.append("=" * 50)
         
-        if original_time > 0 and tuned_time > 0:
+        if original_time > 0 and tuned_time > 0 and not original_failed and not tuned_failed:
             summary.append(f"원본 프로시저 실행시간: {original_time:.3f}초")
             summary.append(f"튜닝 프로시저 실행시간: {tuned_time:.3f}초")
             
             time_diff = original_time - tuned_time
             improvement_pct = (time_diff / original_time) * 100
             
-            if abs(time_diff) < 0.001:  # 차이가 1ms 미만
+            if abs(time_diff) < 0.001:
                 summary.append("성능 차이: 미미함 (1ms 미만)")
-            elif improvement_pct > 0:  # 개선됨
+            elif improvement_pct > 0:
                 summary.append(f"성능 개선: {time_diff:.3f}초 단축 ({improvement_pct:.1f}% 개선)")
-            else:  # 느려짐
+            else:
                 summary.append(f"성능 저하: {abs(time_diff):.3f}초 증가 ({abs(improvement_pct):.1f}% 저하)")
         else:
+            exec_time = result.get('execution_time', 0)
             summary.append(f"전체 실행시간: {exec_time:.3f}초")
-            summary.append("개별 실행시간 정보 없음")
+            if original_failed or tuned_failed:
+                summary.append("일부 프로시저 실패로 성능 비교 불가")
+            else:
+                summary.append("개별 실행시간 정보 없음")
         
         # 복사 가능한 쿼리 추가
         summary.append("")

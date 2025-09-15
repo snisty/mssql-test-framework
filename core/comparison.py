@@ -62,6 +62,45 @@ class StoredProcedureComparator:
         self.ignore_row_order = True
         self.numeric_tolerance = 1e-10
         
+    def _normalize_value(self, value):
+        """None, NaN, 빈 문자열을 통일된 형태로 정규화"""
+        if pd.isna(value) or value is None or (isinstance(value, str) and value.strip() == ''):
+            return ''  # 빈 문자열로 통일
+        return value
+    
+    def _values_equal(self, val1, val2):
+        """두 값이 같은지 안전하게 비교 (None, NaN 처리 포함)"""
+        # 둘 다 None이거나 NaN인 경우
+        if (pd.isna(val1) or val1 is None) and (pd.isna(val2) or val2 is None):
+            return True
+        
+        # 하나만 None/NaN인 경우
+        if (pd.isna(val1) or val1 is None) != (pd.isna(val2) or val2 is None):
+            return False
+        
+        # 정규화된 값으로 비교
+        normalized_val1 = self._normalize_value(val1)
+        normalized_val2 = self._normalize_value(val2)
+        
+        try:
+            return normalized_val1 == normalized_val2
+        except Exception:
+            # 비교 자체가 실패하면 문자열로 변환해서 비교
+            try:
+                return str(normalized_val1) == str(normalized_val2)
+            except Exception:
+                # 그것도 실패하면 다르다고 간주
+                return False
+        
+    def _format_value_for_display(self, value):
+        """화면 출력용 값 포맷팅"""
+        if pd.isna(value) or value is None:
+            return 'NULL'
+        elif isinstance(value, str) and value.strip() == '':
+            return '(빈 문자열)'
+        else:
+            return str(value)
+        
     def compare_results(
         self, 
         original_results: List[Dict[str, Any]], 
@@ -217,28 +256,11 @@ class StoredProcedureComparator:
             original_df = pd.DataFrame(original_data, columns=columns)
             tuned_df = pd.DataFrame(tuned_data, columns=columns)
             
-            # 행 순서 무시 옵션 (안전한 정렬 시도)
-            if self.ignore_row_order:
-                try:
-                    # 정렬 가능한 컬럼만 사용하여 안전한 정렬
-                    sortable_columns = []
-                    for col in columns:
-                        try:
-                            # 테스트 정렬로 컬럼이 정렬 가능한지 확인
-                            original_df[col].sort_values()
-                            sortable_columns.append(col)
-                        except (TypeError, ValueError):
-                            # 정렬 불가능한 컬럼은 제외
-                            continue
-                    
-                    if sortable_columns:
-                        original_df = original_df.sort_values(by=sortable_columns).reset_index(drop=True)
-                        tuned_df = tuned_df.sort_values(by=sortable_columns).reset_index(drop=True)
-                    
-                except Exception as sort_error:
-                    # 정렬 실패 시 정렬 없이 비교 진행
-                    logger.warning(f"DataFrame 정렬 실패, 정렬 없이 비교 진행: {str(sort_error)}")
+            # 정규화는 개별 값 비교 시 _values_equal에서 수행 (중복 제거)
             
+            # SQL 데이터는 일반적으로 정렬이 중요하지 않으므로 정렬 로직 제거
+            # 대신 단순하게 행별 비교만 수행
+            logger.debug("SQL 데이터 특성상 정렬 없이 순서대로 비교")
             # 상세 데이터 비교
             data_differences = self._detailed_data_comparison(
                 original_df, tuned_df, result_set_index
@@ -272,75 +294,85 @@ class StoredProcedureComparator:
         tuned_df: pd.DataFrame, 
         result_set_index: int
     ) -> List[Dict[str, Any]]:
-        """상세 데이터 비교"""
+        """상세 데이터 비교 - SQL 데이터 특성에 맞게 단순화"""
         differences = []
         
-        # 각 컬럼별 비교
+        # 각 컬럼별 개별 값 비교 (pandas Series 연산 사용 안함)
         for column in original_df.columns:
             original_col = original_df[column]
             tuned_col = tuned_df[column]
             
-            # 숫자 타입 비교 (허용 오차 고려)
-            if pd.api.types.is_numeric_dtype(original_col) and pd.api.types.is_numeric_dtype(tuned_col):
-                if not original_col.equals(tuned_col):
-                    # 허용 오차 내에서 비교
-                    numeric_diff = abs(original_col - tuned_col)
-                    significant_diff_mask = numeric_diff > self.numeric_tolerance
+            # DataFrame이 반환된 경우 Series로 변환
+            if hasattr(original_col, 'iloc') and len(original_col.shape) > 1:
+                original_col = original_col.iloc[:, 0]  # 첫 번째 컬럼만 사용
+            if hasattr(tuned_col, 'iloc') and len(tuned_col.shape) > 1:
+                tuned_col = tuned_col.iloc[:, 0]  # 첫 번째 컬럼만 사용
+            
+            # 개별 행 비교로 안전하게 처리
+            diff_rows = []
+            sample_differences = []
+            
+            # 한 번만 리스트로 변환 (성능 최적화)
+            try:
+                orig_values = original_col.tolist()
+                tuned_values = tuned_col.tolist()
+            except Exception as e:
+                logger.error(f"컬럼 {column} 리스트 변환 실패: {str(e)}")
+                logger.debug(f"original_col 타입: {type(original_col)}, tuned_col 타입: {type(tuned_col)}")
+                continue
+            
+            for idx in range(len(orig_values)):
+                try:
+                    orig_val = orig_values[idx]
+                    tuned_val = tuned_values[idx]
                     
-                    if significant_diff_mask.any():
-                        diff_rows = original_df.index[significant_diff_mask].tolist()
-                        # 첫 번째 차이나는 행의 정보 포함
-                        first_diff_row = diff_rows[0]
-                        original_val = original_col.iloc[first_diff_row]
-                        tuned_val = tuned_col.iloc[first_diff_row]
+                    # 개별 값 비교
+                    if not self._values_equal(orig_val, tuned_val):
+                        diff_rows.append(idx)
                         
-                        differences.append({
-                            'type': 'numeric_data',
-                            'result_set_index': result_set_index,
-                            'column': column,
-                            'different_rows': diff_rows,
-                            'max_difference': numeric_diff.max(),
-                            'sample_differences': [{
-                                'row': first_diff_row,
-                                'original': original_val,
+                        # 샘플 데이터 수집 (최대 5개)
+                        if len(sample_differences) < 5:
+                            sample_differences.append({
+                                'row': idx,
+                                'original': orig_val,
                                 'tuned': tuned_val
-                            }],
-                            'message': f'{first_diff_row + 1} 행, {column} 열의 값이 다릅니다. (\'{original_val}\' ≠ \'{tuned_val}\')'
+                            })
+                            
+                except Exception as e:
+                    # 개별 값 비교도 실패하면 차이로 간주
+                    logger.warning(f"행 {idx}, 컬럼 {column} 비교 중 오류: {str(e)}")
+                    diff_rows.append(idx)
+                    if len(sample_differences) < 5:
+                        sample_differences.append({
+                            'row': idx,
+                            'original': 'ERROR',
+                            'tuned': 'ERROR'
                         })
             
-            # 문자열/기타 타입 비교
-            else:
-                if not original_col.equals(tuned_col):
-                    diff_mask = original_col != tuned_col
-                    diff_rows = original_df.index[diff_mask].tolist()
+            # 차이가 있는 경우만 결과에 추가
+            if diff_rows:
+                # 첫 번째 샘플로 메시지 생성
+                if sample_differences:
+                    first_sample = sample_differences[0]
+                    row_num = first_sample['row'] + 1
+                    original_val = first_sample['original']
+                    tuned_val = first_sample['tuned']
                     
-                    # 샘플 차이 데이터 (최대 5개)
-                    sample_differences = []
-                    for row_idx in diff_rows[:5]:
-                        sample_differences.append({
-                            'row': row_idx,
-                            'original': original_col.iloc[row_idx],
-                            'tuned': tuned_col.iloc[row_idx]
-                        })
-                    
-                    # 첫 번째 샘플 차이로 메시지 생성
-                    if sample_differences:
-                        first_sample = sample_differences[0]
-                        row_num = first_sample['row'] + 1
-                        original_val = first_sample['original']
-                        tuned_val = first_sample['tuned']
-                        message = f'{row_num} 행, {column} 열의 값이 다릅니다. (\'{original_val}\' ≠ \'{tuned_val}\')'
-                    else:
-                        message = f'결과셋 {result_set_index + 1}의 {column} 컬럼에서 {len(diff_rows)}개 행의 데이터가 다름'
-                    
-                    differences.append({
-                        'type': 'text_data',
-                        'result_set_index': result_set_index,
-                        'column': column,
-                        'different_rows': diff_rows,
-                        'sample_differences': sample_differences,
-                        'message': message
-                    })
+                    # 값을 명확히 표시하기 위해 포맷팅
+                    original_display = self._format_value_for_display(original_val)
+                    tuned_display = self._format_value_for_display(tuned_val)
+                    message = f'{row_num} 행, {column} 열의 값이 다릅니다. ({original_display} ≠ {tuned_display})'
+                else:
+                    message = f'결과셋 {result_set_index + 1}의 {column} 컬럼에서 {len(diff_rows)}개 행의 데이터가 다름'
+                
+                differences.append({
+                    'type': 'data_difference',
+                    'result_set_index': result_set_index,
+                    'column': column,
+                    'different_rows': diff_rows,
+                    'sample_differences': sample_differences,
+                    'message': message
+                })
         
         return differences
     
@@ -379,18 +411,15 @@ class StoredProcedureComparator:
                     report.append(f"   원본 컬럼: {diff['original_columns']}")
                     report.append(f"   튜닝 컬럼: {diff['tuned_columns']}")
                 
-                elif diff['type'] in ['numeric_data', 'text_data']:
+                elif diff['type'] == 'data_difference':
                     report.append(f"   결과셋: {diff['result_set_index'] + 1}")
                     report.append(f"   컬럼: {diff['column']}")
                     report.append(f"   차이 있는 행: {len(diff['different_rows'])}개")
                     
-                    if diff['type'] == 'numeric_data':
-                        report.append(f"   최대 차이: {diff['max_difference']}")
-                    
-                    elif 'sample_differences' in diff:
+                    if 'sample_differences' in diff:
                         report.append("   샘플 차이:")
                         for sample in diff['sample_differences']:
-                            report.append(f"     행 {sample['row']}: '{sample['original']}' → '{sample['tuned']}'")
+                            report.append(f"     행 {sample['row'] + 1}: '{sample['original']}' → '{sample['tuned']}'")
         
         report.append("\n" + "=" * 60)
         
