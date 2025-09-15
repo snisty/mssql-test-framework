@@ -59,6 +59,7 @@ wheels/
 
 # PyInstaller
 *.spec
+!SQL_Test_Framework.spec
 *.manifest
 *.exe
 
