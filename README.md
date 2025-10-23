@@ -62,6 +62,60 @@ pyinstaller --windowed --name "SQL_Test_Framework" main.py
 
 생성된 실행파일은 `dist` 폴더에서 확인할 수 있습니다.
 
+## 환경 설정
+
+### 로그인 기본값 설정
+
+프로그램을 실행할 때마다 로그인 정보를 입력하는 번거로움을 없애기 위해 `.env` 파일로 기본값을 설정할 수 있습니다.
+
+#### 1. `.env` 파일 생성
+
+```bash
+# .env.example을 복사하여 .env 파일 생성
+cp .env.example .env
+```
+
+#### 2. `.env` 파일 편집
+
+```bash
+# Database Configuration
+DB_SERVER=your_server_name          # 서버명 (예: localhost, 192.168.0.1\SQLEXPRESS)
+DB_NAME=your_database_name          # 데이터베이스명
+DB_USE_WINDOWS_AUTH=True            # Windows 인증 사용 여부 (True/False)
+DB_USERNAME=                        # SQL 인증 사용자명 (SQL 인증 시)
+DB_PASSWORD=                        # SQL 인증 비밀번호 (SQL 인증 시)
+
+# Application Settings
+LOG_LEVEL=INFO
+LOG_FILE=logs/app.log
+
+# Test Settings
+TEST_TIMEOUT=300
+MAX_CONCURRENT_TESTS=1
+```
+
+#### 3. 설정 예시
+
+**Windows 인증 사용 시:**
+```bash
+DB_SERVER=localhost\SQLEXPRESS
+DB_NAME=MyDatabase
+DB_USE_WINDOWS_AUTH=True
+DB_USERNAME=
+DB_PASSWORD=
+```
+
+**SQL 인증 사용 시:**
+```bash
+DB_SERVER=192.168.0.100
+DB_NAME=MyDatabase
+DB_USE_WINDOWS_AUTH=False
+DB_USERNAME=sa
+DB_PASSWORD=your_password
+```
+
+> ⚠️ **보안 주의사항**: `.env` 파일은 `.gitignore`에 포함되어 있어 Git에 커밋되지 않습니다. 민감한 정보(비밀번호 등)는 반드시 `.env` 파일에만 저장하세요.
+
 ## 사용 방법
 
 ### 1. 프로그램 실행
@@ -76,6 +130,7 @@ python main.py
 
 - Windows 인증 또는 SQL 인증 선택
 - 서버명과 데이터베이스명 입력
+- ✨ `.env` 파일에 설정한 기본값이 자동으로 입력됩니다
 
 ### 3. 테스트 케이스 등록
 
